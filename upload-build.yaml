@@ -1,0 +1,57 @@
+name: Upload Beta Build
+
+on:
+  push:
+    branches:
+      - beta
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build app
+        run: npm run build
+        env:
+          CI: false
+          REACT_APP_API_URL: ${{ secrets.BETA_REACT_APP_API_URL }}
+          REACT_APP_API_BASE_URL: ${{ secrets.BETA_REACT_APP_API_BASE_URL }}
+          REACT_APP_FRONT_URL: ${{ secrets.BETA_REACT_APP_FRONT_URL }}
+          SENTRY_DNS: ${{ secrets.BETA_SENTRY_DNS }}
+          REACT_APP_DATE_FORMAT: ${{ secrets.BETA_REACT_APP_DATE_FORMAT }}
+          REACT_APP_GOOGLE_CLIENT_ID: ${{ secrets.BETA_REACT_APP_GOOGLE_CLIENT_ID }}
+          REACT_APP_GOOGLE_MAP_ENABLED: ${{ secrets.BETA_REACT_APP_GOOGLE_MAP_ENABLED }}
+          REACT_APP_CERVED_API_KEY: ${{ secrets.BETA_REACT_APP_CERVED_API_KEY }}
+          REACT_APP_CAPTCHA_SITE_KEY: ${{ secrets.BETA_REACT_APP_CAPTCHA_SITE_KEY }}
+          REACT_APP_RESTRICT_DUMMY_EMAIL_PROVIDERS: ${{ secrets.BETA_REACT_APP_RESTRICT_DUMMY_EMAIL_PROVIDERS }}
+          REACT_APP_DATE_FORMAT_EUROPEAN: ${{ secrets.BETA_REACT_APP_DATE_FORMAT_EUROPEAN }}
+          REACT_APP_ENCRYPTION_KEY: ${{ secrets.BETA_REACT_APP_ENCRYPTION_KEY }}
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.BETA_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.BETA_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.BETA_AWS_REGION }}
+      - name: Copy build to S3 Bucket
+        run: |
+          echo "Copy build directory to S3 Bucket"
+          aws s3 cp build/ s3://proleven-web-app --recursive
+
+      - name: Create Invalidation in Cloudfront
+        run: |
+          echo "Creating invalidation for cloudfront to clear cache"
+          aws cloudfront create-invalidation \
+            --distribution-id  ${{ secrets.BETA_CF_DISTRIBUTION_ID }} --paths "/*"
+          echo "Waiting for CloudFront invalidation to process..."
+          sleep 15

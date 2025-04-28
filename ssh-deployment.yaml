@@ -1,0 +1,75 @@
+name: Beta-Deployment
+
+on:
+  push:
+    branches:
+      - beta
+      
+jobs:
+  deploy:
+    name: Deploy via Bastion
+    runs-on: ubuntu-latest
+    env:
+      AWS_INSTANCE_SG_ID: ${{ secrets.BASTION_SG_ID }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Get GitHub runner public IP
+        id: ip
+        run: |
+          echo "ipv4=$(curl -s https://api.ipify.org)" >> $GITHUB_ENV
+
+      - name: Print Public IP
+        run: |
+          echo "Runner IP is ${{ env.ipv4 }}"
+
+      # THIS IS OUT-DATED VERSION FOR GETTING IP4
+      # - name: Get GitHub runner public IP
+      #   id: ip
+      #   uses: haythem/public-ip@v1.3
+      # - name: Print Public IP
+      #   run: |
+      #     echo ${{ steps.ip.outputs.ipv4 }}
+
+      - name: Whitelist runner IP to Bastion SG
+        run: |
+          aws ec2 authorize-security-group-ingress \
+            --group-id $AWS_INSTANCE_SG_ID \
+            --protocol tcp \
+            --port 22 \
+            --cidr ${{ env.ipv4 }}/32
+
+      - name: SSH to Bastion and deploy to private EC2
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.BASTION_HOST }}
+          username: ubuntu
+          key: ${{ secrets.BASTION_KEY }}
+          script: |
+            ssh -o StrictHostKeyChecking=no beta << 'EOF'
+              echo "Connected to private EC2"
+              export NVM_DIR="$HOME/.nvm"
+              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  
+              [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" 
+              cd /var/www/backend || exit 1
+              git pull https://${{ secrets.GIT_USER }}:${{ secrets.GIT_TOKEN }}@github.com/matteo-mil/proleven-backend beta || exit 1
+              npm install || exit 1
+              export NODE_OPTIONS=--max_old_space_size=8192
+              npm run build || exit 1
+              pm2 restart ecosystem.config.js --update-env
+            EOF
+
+      - name: Revoke runner IP from Bastion SG
+        if: always()
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id $AWS_INSTANCE_SG_ID \
+            --protocol tcp \
+            --port 22 \
+            --cidr ${{ env.ipv4 }}/32
